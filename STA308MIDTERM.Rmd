@@ -1,0 +1,278 @@
+---
+title: "U.S. Department of Education Proficiency Data Dashboard"
+author: "Juyuan Li"
+date: "2023-04-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(readr)
+library(dplyr)
+library(stringr)
+library(ggplot2)
+library(tidyverse)
+library(ggthemes)
+library(patchwork)
+library(ggrepel)
+```
+
+
+## Choropleth map for Math Assessment data from 2020 to 2021
+
+```{r}
+#Input Math Assessment data from 2020 to 2021 and filter
+math_achievement21 <- read_csv("https://www2.ed.gov/about/inits/ed/edfacts/data-files/math-achievement-lea-sy2020-21.csv")
+```
+
+```{r, warning=FALSE}
+#Filter the data
+math_achievement21 <- math_achievement21 %>%
+  filter(CATEGORY == "ALL", 
+         GRADE == "00", 
+         NUMVALID > 1000,
+         PCTPROF != "LE1")
+
+#calculate the mean value of math assessment in each state
+state_means_math_assess21 <- math_achievement21 %>%
+  group_by(STNAM) %>%
+  summarize(mean_mathassess = mean(as.numeric(PCTPROF))) %>%
+  arrange(desc(mean_mathassess))
+
+math_table <- rbind(head(state_means_math_assess21, n = 3), tail(state_means_math_assess21, n = 3))
+
+# Merge the dataset with the us map data
+us_map <- map_data("state")
+
+glimpse(us_map)
+
+us_map_math_assess21 <- state_means_math_assess21 %>%
+  mutate(litte_state = str_to_lower(STNAM)) %>%
+  left_join(us_map, by=c("litte_state" = "region"))
+
+## So I have my math map
+p_math_map_21 <- ggplot(us_map_math_assess21, aes(x=long, y=lat)) +
+  geom_polygon(aes(fill=`mean_mathassess`, group=group), color="gray30") + 
+  coord_map() + 
+  theme_map() +
+  theme(legend.position = "bottom") + 
+  labs(fill="Percentage\nof Proficent Student",
+       title = "Math Assessment Results by State",
+       subtitle="From 2020 to 2021") +
+  scale_fill_gradient2(low = "gray99", high = "steelblue3")
+p_math_map_21
+
+```
+
+## Choropleth map for Reading/Language Arts Assessment data from 2020 to 2021
+```{r, warning=FALSE}
+#Input Reading and language Assessment data from 2020 to 2021
+rla_achievement21 <- read_csv("https://www2.ed.gov/about/inits/ed/edfacts/data-files/rla-achievement-lea-sy2020-21.csv")
+```
+
+```{r, warning=FALSE}
+#Filter the data
+rla_achievement21 <- rla_achievement21 %>%
+  filter(CATEGORY == "ALL", 
+         GRADE == "00", 
+         NUMVALID > 1000)
+
+#Similarly, I calculate the mean value of rla assessment results in each state
+state_means_rla_assess21 <- rla_achievement21 %>%
+  group_by(STNAM) %>%
+  summarize(mean_rlaassess = mean(as.numeric(PCTPROF))) %>%
+  arrange(desc(mean_rlaassess))
+
+rla_table <- rbind(head(state_means_rla_assess21, n = 3), 
+                   tail(state_means_rla_assess21, n = 3))
+
+#Similarly, I merge the dataset with the us map data
+us_map_rla_assess21 <- state_means_rla_assess21 %>%
+  mutate(litte_state = str_to_lower(STNAM)) %>%
+  left_join(us_map, by=c("litte_state" = "region"))
+
+## So I have my rla map
+p_rla_map_21 <- ggplot(us_map_rla_assess21, aes(x=long, y=lat)) +
+  geom_polygon(aes(fill=`mean_rlaassess`, group=group), color="gray30") + 
+  #  geom_text(data=county_centers, aes(label=County) ) + 
+  coord_map() + 
+  theme_map() +
+  theme(legend.position = "bottom") + 
+  labs(fill="Percentage\nof Proficent Student",
+       title = "Reading/Language Arts Assessment Results by State",
+       subtitle="From 2020 to 2021") +
+  scale_fill_gradient2(low = "gray99", high = "firebrick3")
+p_rla_map_21
+
+```
+
+## Draft dashboard
+Now I want to compare the two choropleth maps and see if I can find any relations
+```{r, warning=FALSE}
+my_dashboard <- (p_math_map_21 | p_rla_map_21)+
+  plot_annotation(
+    title = 'Achievement Results for State Assessments',
+    caption = 'Source: U.S. Department of Education') +
+  plot_layout(heights=c(2.5, 1.5))
+my_dashboard
+#It seems like the relationship between math and reading/language arts is positive.
+#Now i want to do a relationship plot to see if my assumption is correct.
+```
+
+
+## Daft Relationship Plot
+```{r, warning=FALSE}
+#First, I identify those states who have best and worst math and rla assessment results
+which.min(state_means_math_assess21$mean_mathassess)
+which.max(state_means_math_assess21$mean_mathassess)
+state_means_math_assess21$STNAM[c(1,49)]#"MARYLAND" "MAINE"
+
+which.min(state_means_rla_assess21$mean_rlaassess)
+which.max(state_means_rla_assess21$mean_rlaassess)
+state_means_rla_assess21$STNAM[c(1,49)]#"OKLAHOMA" "MAINE" 
+```
+
+## Build the virtualization
+
+```{r, warning=FALSE}
+states_of_interest <- c(state_means_math_assess21$STNAM[c(1,49)],
+                        state_means_rla_assess21$STNAM[c(1,49)],
+                        "NEW MEXICO",
+                        "ALABAMA",
+                        "MARYLAND") ## These three states appear opposite results from the map 
+states_of_interest <- unique(states_of_interest)
+
+#Then, I generate a relationship plot with states of interests labeled.
+#Merge math assessment results with reading/language arts assessment results
+state_means_math_rla_assess21 <- left_join(state_means_math_assess21,state_means_rla_assess21,
+                                           by=c("STNAM" = "STNAM"))
+
+#Draw the relationship
+p_math_rla_relate <- ggplot(state_means_math_rla_assess21, 
+                             aes(x=mean_rlaassess, 
+                                 y=mean_mathassess)) + 
+  geom_smooth(method="lm", color="gray85", se=FALSE) + 
+  geom_point(color="gray50") + 
+  geom_text_repel(data=filter(state_means_math_rla_assess21, STNAM %in% states_of_interest), aes(label=STNAM) ) + 
+  labs(x="Average Reading/Language Arts Assessment Results", y="Average Math Assessment Results",
+       title="Relationship of Math & Reading/Language Arts") + 
+  theme_minimal()
+p_math_rla_relate
+
+```
+
+
+## Add participation into relationship plot
+```{r, warning=FALSE}
+#load participation data and filter
+math_participation21 <- read_csv("https://www2.ed.gov/about/inits/ed/edfacts/data-files/math-participation-lea-sy2020-21.csv")
+rla_participation21 <- read_csv("https://www2.ed.gov/about/inits/ed/edfacts/data-files/rla-participation-lea-sy2020-21.csv")
+```
+
+```{r, warning=FALSE}
+math_participation21 <-math_participation21 %>%
+  filter(CATEGORY == "ALL", 
+       GRADE == "00", 
+       NUMPART > 1000)
+
+rla_participation21 <-rla_participation21 %>%
+  filter(CATEGORY == "ALL", 
+         GRADE == "00", 
+         NUMPART > 1000)
+
+#For math participation(similar to assessment results)
+state_means_math_part21 <- math_participation21 %>%
+  group_by(STNAM) %>%
+  summarise(mean_mathpart = mean(as.numeric(PCTPART), na.rm = TRUE))%>%
+  arrange(desc(mean_mathpart))
+
+#For rla participation(similar to assessment results)
+state_means_rla_part21 <- rla_participation21 %>%
+  group_by(STNAM) %>%
+  summarise(mean_rlapart = mean(as.numeric(PCTPART), na.rm = TRUE))%>%
+  arrange(desc(mean_rlapart))
+
+#merge the two participation data sets and calculate the mean
+state_means_math_rla_part21 <- left_join(state_means_math_part21,state_means_rla_part21,
+                                           by=c("STNAM" = "STNAM")) %>%
+  mutate(average_part = (mean_mathpart + mean_rlapart) / 2)
+#merge the participation dataset with assessment results
+state_means_math_rla_assess_part21 <- left_join(state_means_math_rla_assess21,state_means_math_rla_part21,
+                                         by=c("STNAM" = "STNAM"))
+
+```
+
+## Build the virtualization
+
+```{r, warning=FALSE}
+#Draw the relationship again! This time I introduce participation rate.
+p_math_rla_relate_withpart <- ggplot(state_means_math_rla_assess_part21, 
+                            aes(x=mean_rlaassess, 
+                                y=mean_mathassess)) + 
+  geom_point(color="moccasin", aes(size=average_part)) + 
+  geom_smooth(method="lm", color="green3", se=FALSE) + 
+  geom_point(color="brown4", data=filter(state_means_math_rla_assess21, STNAM %in% states_of_interest), aes(label=STNAM)) +
+  scale_size_continuous(name = "Participation rate") + 
+  geom_text_repel(data=filter(state_means_math_rla_assess21, STNAM %in% states_of_interest), aes(label=STNAM) ) + 
+  labs(x="Average Reading/Language Arts Assessment Results", y="Average Math Assessment Results",
+       title="Relationship of Math & Reading/Language Arts") + 
+  theme_minimal()
+p_math_rla_relate_withpart
+```
+
+
+## Redo choropleth maps and label states of interest.
+```{r, warning=FALSE}
+# estimate centers of states
+state_centers <- us_map_math_assess21 %>% 
+  filter(STNAM %in% states_of_interest) %>% 
+  group_by(STNAM) %>%
+  summarize_at(vars(long, lat), ~ mean(range(.)))
+
+#Final math assessment map
+p_math_map_21_withlabels <- ggplot(us_map_math_assess21, aes(x=long, y=lat)) +
+  geom_polygon(aes(fill=`mean_mathassess`, group=group), color="gray30") +
+  geom_text(data=state_centers, aes(x = long, y = lat, label=STNAM), fontface = "bold", size = 3) + 
+  coord_map() + 
+  theme_map() +
+  theme(legend.position = "bottom") + 
+  labs(fill="Percentage\nof Proficent Student",
+       title = "Math Assessment Results by State",
+       subtitle="From 2020 to 2021") +
+  scale_fill_gradient2(low = "gray99", high = "steelblue3")
+p_math_map_21_withlabels
+
+#Final reading/language arts assessment map
+p_rla_map_21_withlabels <- ggplot(us_map_rla_assess21, aes(x=long, y=lat)) +
+  geom_polygon(aes(fill=`mean_rlaassess`, group=group), color="gray30") +
+  geom_text(data=state_centers, aes(x = long, y = lat, label=STNAM), fontface = "bold", size = 3) + 
+  coord_map() + 
+  theme_map() +
+  theme(legend.position = "bottom") + 
+  labs(fill="Percentage\nof Proficent Student",
+       title = "Reading/Language Arts Assessment Results by State",
+       subtitle="From 2020 to 2021") +
+  scale_fill_gradient2(low = "gray99", high = "firebrick3")
+p_rla_map_21_withlabels
+
+```
+
+
+## Final dashboard
+```{r, message=FALSE, warning=FALSE}
+my_dashboard_final <- (p_math_map_21_withlabels | p_rla_map_21_withlabels)/p_math_rla_relate_withpart   +
+  plot_annotation(title = 'State Assessments in Mathematics and Reading/Language Arts',
+                  caption = 'Source: U.S. Department of Education') +
+  plot_layout(heights=c(2, 1.5))
+my_dashboard_final
+
+ggsave(plot=my_dashboard_final, filename="StateAssessmentDashboard.png",
+       width=12, height=7.5, dpi=300)
+```
+
+
+**According to my final dashboard, it appears that there is a positive relationship between math and reading/language arts. This is possibly due to states with better education resources and methods being able to improve student proficiency across subjects.**
+
+**The introduction of the participation rate does not fully explain why Maine performs so well since it has not been recognized for its quality education. This may be due to the data being aggregated at the state level, losing some viability. However, the participation rate does help explain why New Mexico performs relatively well in reading/language arts but struggles in math. Its low participation rate may introduce some bias.**
+
+**Overall, my dashboard serves as a useful starting point for further investigation.**
+
